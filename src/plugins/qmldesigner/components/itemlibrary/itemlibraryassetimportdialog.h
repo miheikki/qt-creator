@@ -25,6 +25,7 @@
 #pragma once
 
 #include "itemlibraryassetimporter.h"
+#include "modelnode.h"
 
 #include <QtWidgets/qdialog.h>
 #include <QtCore/qjsonobject.h>
@@ -49,8 +50,13 @@ public:
                                           const QString &defaulTargetDirectory,
                                           const QVariantMap &supportedExts,
                                           const QVariantMap &supportedOpts,
+                                          const QJsonObject &defaultOpts,
                                           QWidget *parent = nullptr);
     ~ItemLibraryAssetImportDialog();
+
+    static void updateImport(const ModelNode &updateNode,
+                             const QVariantMap &supportedExts,
+                             const QVariantMap &supportedOpts);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -69,7 +75,8 @@ private:
     void onImportFinished();
     void onClose();
 
-    void createTab(const QString &tabLabel, int optionsIndex, const QJsonObject &groups);
+    void createTab(const QString &tabLabel, int optionsIndex, const QJsonObject &groups,
+                   const QJsonObject &defaultOpts);
     void updateUi();
 
     Ui::ItemLibraryAssetImportDialog *ui = nullptr;

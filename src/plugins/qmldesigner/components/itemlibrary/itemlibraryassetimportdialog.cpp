@@ -28,26 +28,31 @@
 #include "qmldesignerplugin.h"
 #include "qmldesignerconstants.h"
 #include "model.h"
+#include "nodemetainfo.h"
 
 #include "utils/outputformatter.h"
 #include "theme.h"
 
 #include <projectexplorer/project.h>
 #include <projectexplorer/session.h>
+#include <coreplugin/icore.h>
 
-#include <QtCore/qfileinfo.h>
-#include <QtCore/qdir.h>
-#include <QtCore/qloggingcategory.h>
-#include <QtCore/qtimer.h>
-#include <QtCore/qjsonarray.h>
-#include <QtWidgets/qpushbutton.h>
-#include <QtWidgets/qgridlayout.h>
-#include <QtWidgets/qlabel.h>
-#include <QtWidgets/qcheckbox.h>
-#include <QtWidgets/qspinbox.h>
-#include <QtWidgets/qscrollbar.h>
-#include <QtWidgets/qtabbar.h>
-#include <QtWidgets/qscrollarea.h>
+#include <QFileInfo>
+#include <QDir>
+#include <QLoggingCategory>
+#include <QTimer>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QPushButton>
+#include <QGridLayout>
+#include <QLabel>
+#include <QCheckBox>
+#include <QSpinBox>
+#include <QScrollBar>
+#include <QTabBar>
+#include <QScrollArea>
+#include <QMessageBox>
 
 namespace QmlDesigner {
 
@@ -74,6 +79,7 @@ ItemLibraryAssetImportDialog::ItemLibraryAssetImportDialog(const QStringList &im
                                                            const QString &defaulTargetDirectory,
                                                            const QVariantMap &supportedExts,
                                                            const QVariantMap &supportedOpts,
+                                                           const QJsonObject &defaultOpts,
                                                            QWidget *parent) :
     QDialog(parent)
     , ui(new Ui::ItemLibraryAssetImportDialog)
@@ -197,7 +203,7 @@ ItemLibraryAssetImportDialog::ItemLibraryAssetImportDialog(const QStringList &im
         ui->tabWidget->clear();
         auto tabIt = tabMap.constBegin();
         while (tabIt != tabMap.constEnd()) {
-            createTab(tabIt.key(), tabIt.value(), groups[tabIt.value()]);
+            createTab(tabIt.key(), tabIt.value(), groups[tabIt.value()], defaultOpts);
             ++tabIt;
         }
 
@@ -252,8 +258,107 @@ ItemLibraryAssetImportDialog::~ItemLibraryAssetImportDialog()
     delete ui;
 }
 
+void ItemLibraryAssetImportDialog::updateImport(const ModelNode &updateNode,
+                                                const QVariantMap &supportedExts,
+                                                const QVariantMap &supportedOpts)
+{
+    QString errorMsg;
+    const ModelNode &node = updateNode;
+    if (node.isValid() && node.hasMetaInfo()) {
+        QString compFileName = node.metaInfo().componentFileName(); // absolute path
+        bool preselectNodeSource = true;
+        if (compFileName.isEmpty()) {
+            // Node is not a file component, so we have to check if the current doc itself is
+            compFileName = node.model()->fileUrl().toLocalFile();
+            preselectNodeSource = false;
+        }
+        // Find to top asset folder
+        const QString assetFolder = QLatin1String(Constants::QUICK_3D_ASSETS_FOLDER).mid(1);
+        const QStringList parts = compFileName.split('/');
+        int i = parts.size() - 1;
+        int previousSize = 0;
+        for (; i >= 0; --i) {
+            if (parts[i] == assetFolder)
+                break;
+            previousSize = parts[i].size();
+        }
+        if (i >= 0) {
+            const QString assetPath = compFileName.left(compFileName.lastIndexOf(assetFolder)
+                                                        + assetFolder.size() + previousSize + 1);
+            const QDir assetDir(assetPath);
+
+            // Find import options and the original source scene
+            const QString jsonFileName = assetDir.absoluteFilePath(
+                        Constants::QUICK_3D_ASSET_IMPORT_DATA_NAME);
+            QFile jsonFile{jsonFileName};
+            if (jsonFile.open(QIODevice::ReadOnly)) {
+                QJsonParseError jsonError;
+                const QByteArray fileData = jsonFile.readAll();
+                auto jsonDocument = QJsonDocument::fromJson(fileData, &jsonError);
+                jsonFile.close();
+                if (jsonError.error == QJsonParseError::NoError) {
+                    QJsonObject jsonObj = jsonDocument.object();
+                    const QJsonObject options = jsonObj.value(
+                                Constants::QUICK_3D_ASSET_IMPORT_DATA_OPTIONS_KEY).toObject();
+                    QString sourcePath = jsonObj.value(
+                                Constants::QUICK_3D_ASSET_IMPORT_DATA_SOURCE_KEY).toString();
+                    if (options.isEmpty() || sourcePath.isEmpty()) {
+                        errorMsg = QCoreApplication::translate("ModelNodeOperations",
+                                                               "Asset import data file '%1' is invalid.")
+                                .arg(jsonFileName);
+                    } else {
+                        QFileInfo sourceInfo{sourcePath};
+                        if (!sourceInfo.exists()) {
+                            // Unable to locate original scene source, launch file dialog to locate it
+                            // TODO
+                            qDebug() << "<\x1b[44m \x1b[1m>" << __FUNCTION__
+                                     << ", SCENE SOURCE MISSING"
+                                 << "\x1b[m";
+
+                            sourceInfo.setFile(sourcePath);
+                        }
+                        if (sourceInfo.exists()) {
+                            // TODO preselect relevant files for update
+                            auto importDlg = new ItemLibraryAssetImportDialog(
+                                        {sourceInfo.absoluteFilePath()},
+                                        node.model()->fileUrl().toLocalFile(),
+                                        supportedExts, supportedOpts, options,
+                                        Core::ICore::mainWindow());
+                            importDlg->show();
+
+                        } else {
+                            errorMsg = QCoreApplication::translate("ModelNodeOperations",
+                                                                   "Unable to locate source scene '%1' failed.")
+                                    .arg(sourceInfo.fileName());
+                        }
+                    }
+                } else {
+                    errorMsg = jsonError.errorString();
+                }
+            } else {
+                errorMsg = QCoreApplication::translate("ModelNodeOperations",
+                                                       "Opening asset import data file '%1' failed.")
+                        .arg(jsonFileName);
+            }
+        } else {
+            errorMsg = QCoreApplication::translate("ModelNodeOperations",
+                                                   "Unable to resolve asset import path.");
+        }
+    }
+
+    if (!errorMsg.isEmpty()) {
+        QMessageBox::warning(
+                    qobject_cast<QWidget *>(Core::ICore::dialogParent()),
+                    QCoreApplication::translate("ModelNodeOperations", "Import Update Failed"),
+                    QCoreApplication::translate("ModelNodeOperations",
+                                                "Failed to update import.\nError:\n\n%1").arg(errorMsg),
+                    QMessageBox::Close);
+    }
+}
+
 void ItemLibraryAssetImportDialog::createTab(const QString &tabLabel, int optionsIndex,
-                                             const QJsonObject &groups)
+                                             const QJsonObject &groups,
+                                             const QJsonObject &defaultOpts)
 {
     const int checkBoxColWidth = 18;
     const int labelMinWidth = 130;
@@ -314,7 +419,11 @@ void ItemLibraryAssetImportDialog::createTab(const QString &tabLabel, int option
         const QString optDesc = optObj.value("description").toString();
         const QString optType = optObj.value("type").toString();
         QJsonObject optRange = optObj.value("range").toObject();
-        QJsonValue optValue = optObj.value("value");
+        QJsonValue optValue;
+        if (defaultOpts.isEmpty())
+            optValue = optObj.value("value");
+        else
+            optValue = defaultOpts.value(optKey).toObject().value("value");
         QJsonArray conditions = optObj.value("conditions").toArray();
 
         auto *optLabel = new QLabel(optionsAreaContents);

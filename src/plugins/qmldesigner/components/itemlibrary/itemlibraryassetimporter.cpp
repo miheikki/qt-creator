@@ -42,6 +42,7 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QPushButton>
 
 namespace
@@ -282,6 +283,7 @@ bool ItemLibraryAssetImporter::preParseQuick3DAsset(const QString &file, ParseDa
                 alwaysOverwrite.insert(iconIt.fileInfo().absoluteFilePath());
             }
             alwaysOverwrite.insert(sourceSceneTargetFilePath(pd));
+            alwaysOverwrite.insert(pd.targetDirPath + '/' + Constants::QUICK_3D_ASSET_IMPORT_DATA_NAME);
 
             Internal::AssetImportUpdateDialog dlg {pd.targetDirPath, {}, alwaysOverwrite,
                                                    qobject_cast<QWidget *>(parent())};
@@ -421,6 +423,18 @@ void ItemLibraryAssetImporter::postParseQuick3DAsset(const ParseData &pd)
         }
     }
 
+    // Generate import metadata file
+    const QString sourcePath = pd.sourceInfo.absoluteFilePath();
+    QString importDataFileName = outDir.absoluteFilePath(Constants::QUICK_3D_ASSET_IMPORT_DATA_NAME);
+    QSaveFile importDataFile(importDataFileName);
+    if (importDataFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QJsonObject optObj;
+        optObj.insert(Constants::QUICK_3D_ASSET_IMPORT_DATA_OPTIONS_KEY, pd.options);
+        optObj.insert(Constants::QUICK_3D_ASSET_IMPORT_DATA_SOURCE_KEY, sourcePath);
+        importDataFile.write(QJsonDocument{optObj}.toJson());
+        importDataFile.commit();
+    }
+
     // Gather all generated files
     QDirIterator dirIt(outDir.path(), QDir::Files, QDirIterator::Subdirectories);
     while (dirIt.hasNext()) {
@@ -429,7 +443,7 @@ void ItemLibraryAssetImporter::postParseQuick3DAsset(const ParseData &pd)
     }
 
     // Copy the original asset into a subdirectory
-    assetFiles.insert(pd.sourceInfo.absoluteFilePath(), sourceSceneTargetFilePath(pd));
+    assetFiles.insert(sourcePath, sourceSceneTargetFilePath(pd));
     m_importFiles.insert(assetFiles);
 }
 

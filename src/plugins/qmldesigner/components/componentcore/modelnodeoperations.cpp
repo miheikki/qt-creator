@@ -29,7 +29,6 @@
 #include "layoutingridlayout.h"
 #include "findimplementation.h"
 
-
 #include "addsignalhandlerdialog.h"
 
 #include <bindingproperty.h>
@@ -1579,6 +1578,17 @@ void openSignalDialog(const SelectionContext &selectionContext)
         return;
 
     SignalList::showWidget(selectionContext.currentSingleSelectedNode());
+}
+
+void updateImported3DAsset(const SelectionContext &selectionContext)
+{
+    qDebug() << "<\x1b[42m \x1b[1m>" << __FUNCTION__
+             << "\x1b[m";
+    if (selectionContext.view()) {
+        selectionContext.view()->emitCustomNotification(
+                    "UpdateImported3DAsset", {selectionContext.currentSingleSelectedNode()});
+
+    }
 }
 
 } // namespace ModelNodeOperations
